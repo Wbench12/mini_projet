@@ -1,5 +1,5 @@
 {
-  "experiment_date": "2025-12-11 13:32:14",
+  "experiment_date": "2025-12-11 18:47:25",
   "experiment_type": "FDA Approval Prediction with Semi-Supervised Learning",
   "training_setup": {
     "n_labeled_total": 234,
@@ -28,7 +28,7 @@
     "baseline_roc_auc": 0.8230706075533661,
     "improvement_percent": 7.559107559107561,
     "roc_improvement_percent": -4.3391521197007465,
-    "training_time": 6.849046945571899
+    "training_time": 6.76524543762207
   },
   "methods_tested": [
     "Baseline (Supervised Random Forest)",
