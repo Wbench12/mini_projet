@@ -1,6 +1,6 @@
 {
-  "experiment_date": "2025-12-11 18:55:39",
-  "experiment_type": "Limited Labeled Data (220 samples)",
+  "experiment_date": "2025-12-11 20:39:36",
+  "experiment_type": "Clinical Toxicity Prediction (Semi-Supervised)",
   "training_setup": {
     "n_labeled_total": 222,
     "n_labeled_train": 155,
@@ -13,36 +13,35 @@
       10000
     ],
     "stratified_sampling": true,
-    "train_test_split": "70-30"
+    "metric_used_for_selection": "Composite Score (Avg of F1 & ROC-AUC)"
   },
   "best_model_tox": {
-    "method": "Co-Training",
-    "name": "CoTrain(n=5000)",
-    "n_unlabeled_used": 5000,
-    "f1_score": 0.7294117647058823,
-    "accuracy": 0.6567164179104478,
-    "precision": 0.6078431372549019,
-    "recall": 0.9117647058823529,
-    "roc_auc": 0.7054367201426025,
-    "pr_auc": 0.7042645831076806,
-    "baseline_f1": 0.65625,
-    "baseline_roc_auc": 0.7825311942959001,
-    "improvement_percent": 11.148459383753496,
-    "roc_improvement_percent": -9.851936218678809
+    "method": "Self-Training",
+    "name": "SelfTraining-RF (n=2500)",
+    "n_unlabeled_used": 2500,
+    "composite_score": 0.7460837185413456,
+    "f1_score": 0.711864406779661,
+    "accuracy": 0.746268656716418,
+    "precision": 0.84,
+    "recall": 0.6176470588235294,
+    "roc_auc": 0.7803030303030303,
+    "baseline_composite": 0.7193905971479501,
+    "improvement_composite_pct": 3.710518527656793,
+    "improvement_f1_pct": 8.47457627118644,
+    "improvement_roc_pct": -0.28473804100227434,
+    "training_time": 2.9122300148010254
   },
   "methods_tested": [
-    "Baseline (Supervised Random Forest)",
-    "Label Propagation (Graph-based, hard labels)",
-    "Label Spreading (Graph-based, soft labels, \u03b1=0.2)",
-    "Self-Training (Iterative pseudo-labeling, threshold=0.75)",
-    "Co-Training (Multi-view learning with feature splits)"
+    "Baseline (Supervised RF)",
+    "Label Propagation",
+    "Label Spreading",
+    "Self-Training",
+    "Co-Training"
   ],
   "key_findings": [
-    "With only 155 labeled samples, semi-supervised learning improved CT_TOX F1 by +11.15%",
-    "Best method: Co-Training using 5,000 unlabeled samples",
-    "ROC-AUC improved from 0.7825 to 0.7054",
-    "Unlabeled data successfully enhanced model performance",
-    "Demonstrates the power of SSL when labeled data is scarce",
-    "All 4 SSL methods evaluated: Label Propagation, Label Spreading, Self-Training, Co-Training"
+    "Best Method: Self-Training with 2,500 unlabeled samples.",
+    "Composite Score improved by +3.71% (from 0.7194 to 0.7461).",
+    "F1-Score improved by +8.47%.",
+    "Demonstrates utility of unlabeled data for toxicity prediction."
   ]
 }

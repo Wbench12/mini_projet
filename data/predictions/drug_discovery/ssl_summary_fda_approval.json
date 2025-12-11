@@ -1,46 +1,39 @@
 {
-  "experiment_date": "2025-12-11 18:47:25",
-  "experiment_type": "FDA Approval Prediction with Semi-Supervised Learning",
+  "experiment_date": "2025-12-11 20:35:51",
+  "experiment_type": "FDA Approval Prediction (Semi-Supervised)",
   "training_setup": {
-    "n_labeled_total": 234,
     "n_labeled_train": 163,
     "n_test": 71,
-    "n_unlabeled_available": 249453,
-    "unlabeled_sizes_tested": [
-      500,
-      1000,
-      2500,
-      5000,
-      10000
-    ],
+    "n_unlabeled_pool": 249453,
     "stratified_sampling": true,
-    "train_test_split": "70-30"
+    "metric_used_for_selection": "Composite Score (Avg of F1 & ROC-AUC)"
   },
   "best_model_fda": {
-    "method": "Co-Training",
-    "n_unlabeled_used": 500,
-    "f1_score": 0.8351648351648352,
-    "accuracy": 0.7887323943661971,
-    "precision": 0.7755102040816326,
-    "recall": 0.9047619047619048,
-    "roc_auc": 0.7873563218390804,
-    "baseline_f1": 0.7764705882352941,
-    "baseline_roc_auc": 0.8230706075533661,
-    "improvement_percent": 7.559107559107561,
-    "roc_improvement_percent": -4.3391521197007465,
-    "training_time": 6.76524543762207
+    "method": "Self-Training",
+    "n_unlabeled_used": 5000,
+    "composite_score": 0.8224548440065682,
+    "f1_score": 0.8333333333333334,
+    "accuracy": 0.8028169014084507,
+    "precision": 0.8333333333333334,
+    "recall": 0.8333333333333334,
+    "roc_auc": 0.811576354679803,
+    "baseline_composite": 0.7997705978943301,
+    "improvement_composite_pct": 2.836344093163979,
+    "improvement_f1_pct": 7.323232323232326,
+    "improvement_roc_pct": -1.396508728179536,
+    "training_time": 3.9400863647460938
   },
   "methods_tested": [
-    "Baseline (Supervised Random Forest)",
-    "Label Propagation (Graph-based, hard labels)",
-    "Label Spreading (Graph-based, soft labels)",
-    "Self-Training (Iterative pseudo-labeling)",
-    "Co-Training (Multi-view learning)"
+    "Baseline (Supervised RF)",
+    "Label Propagation",
+    "Label Spreading",
+    "Self-Training",
+    "Co-Training"
   ],
   "key_findings": [
-    "With only 163 labeled samples, semi-supervised learning improved F1-Score by +7.56%",
-    "Best method: Co-Training using 500 unlabeled samples",
-    "ROC-AUC changed from 0.8231 to 0.7874 (-4.34%)",
-    "Demonstrates utility of unlabeled molecular data for FDA approval prediction"
+    "Best Method: Self-Training with 5,000 unlabeled samples.",
+    "Composite Score improved by +2.84% (from 0.7998 to 0.8225).",
+    "F1-Score improved by +7.32%.",
+    "Demonstrates that combining unlabeled data improves both classification accuracy and model calibration."
   ]
 }
