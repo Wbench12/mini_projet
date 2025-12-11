@@ -78,6 +78,7 @@ target/
 
 # Jupyter Notebook
 .ipynb_checkpoints
+*.ipynb_checkpoints/
 
 # IPython
 profile_default/
@@ -175,3 +176,28 @@ cython_debug/
 # OS
 .DS_Store
 Thumbs.db
+
+# Enhanced/processed datasets
+data/raw/enhanced_data/
+data/raw/labeled_features.csv
+data/raw/unlabeled_features.csv
+
+# Processed data
+data/processed/*.csv
+!data/processed/.gitkeep
+
+# Predictions
+data/predictions/*.csv
+!data/predictions/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/

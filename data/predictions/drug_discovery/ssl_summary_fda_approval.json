@@ -1,0 +1,46 @@
+{
+  "experiment_date": "2025-12-11 13:32:14",
+  "experiment_type": "FDA Approval Prediction with Semi-Supervised Learning",
+  "training_setup": {
+    "n_labeled_total": 234,
+    "n_labeled_train": 163,
+    "n_test": 71,
+    "n_unlabeled_available": 249453,
+    "unlabeled_sizes_tested": [
+      500,
+      1000,
+      2500,
+      5000,
+      10000
+    ],
+    "stratified_sampling": true,
+    "train_test_split": "70-30"
+  },
+  "best_model_fda": {
+    "method": "Co-Training",
+    "n_unlabeled_used": 500,
+    "f1_score": 0.8351648351648352,
+    "accuracy": 0.7887323943661971,
+    "precision": 0.7755102040816326,
+    "recall": 0.9047619047619048,
+    "roc_auc": 0.7873563218390804,
+    "baseline_f1": 0.7764705882352941,
+    "baseline_roc_auc": 0.8230706075533661,
+    "improvement_percent": 7.559107559107561,
+    "roc_improvement_percent": -4.3391521197007465,
+    "training_time": 6.849046945571899
+  },
+  "methods_tested": [
+    "Baseline (Supervised Random Forest)",
+    "Label Propagation (Graph-based, hard labels)",
+    "Label Spreading (Graph-based, soft labels)",
+    "Self-Training (Iterative pseudo-labeling)",
+    "Co-Training (Multi-view learning)"
+  ],
+  "key_findings": [
+    "With only 163 labeled samples, semi-supervised learning improved F1-Score by +7.56%",
+    "Best method: Co-Training using 500 unlabeled samples",
+    "ROC-AUC changed from 0.8231 to 0.7874 (-4.34%)",
+    "Demonstrates utility of unlabeled molecular data for FDA approval prediction"
+  ]
+}
