@@ -182,8 +182,9 @@ data/raw/enhanced_data/
 data/raw/labeled_features.csv
 data/raw/unlabeled_features.csv
 
+data/processed/*
+
 # Processed data
-data/processed/*.csv
 !data/processed/.gitkeep
 
 # Predictions

@@ -1,5 +1,5 @@
 {
-  "experiment_date": "2025-12-11 20:39:36",
+  "experiment_date": "2025-12-12 20:02:23",
   "experiment_type": "Clinical Toxicity Prediction (Semi-Supervised)",
   "training_setup": {
     "n_labeled_total": 222,
@@ -29,7 +29,7 @@
     "improvement_composite_pct": 3.710518527656793,
     "improvement_f1_pct": 8.47457627118644,
     "improvement_roc_pct": -0.28473804100227434,
-    "training_time": 2.9122300148010254
+    "training_time": 2.8853583335876465
   },
   "methods_tested": [
     "Baseline (Supervised RF)",
