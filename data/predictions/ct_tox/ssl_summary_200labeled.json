@@ -1,0 +1,47 @@
+{
+  "experiment_date": "2025-12-12 20:02:23",
+  "experiment_type": "Clinical Toxicity Prediction (Semi-Supervised)",
+  "training_setup": {
+    "n_labeled_total": 222,
+    "n_labeled_train": 155,
+    "n_test": 67,
+    "unlabeled_sizes_tested": [
+      500,
+      1000,
+      2500,
+      5000,
+      10000
+    ],
+    "stratified_sampling": true,
+    "metric_used_for_selection": "Composite Score (Avg of F1 & ROC-AUC)"
+  },
+  "best_model_tox": {
+    "method": "Self-Training",
+    "name": "SelfTraining-RF (n=2500)",
+    "n_unlabeled_used": 2500,
+    "composite_score": 0.7460837185413456,
+    "f1_score": 0.711864406779661,
+    "accuracy": 0.746268656716418,
+    "precision": 0.84,
+    "recall": 0.6176470588235294,
+    "roc_auc": 0.7803030303030303,
+    "baseline_composite": 0.7193905971479501,
+    "improvement_composite_pct": 3.710518527656793,
+    "improvement_f1_pct": 8.47457627118644,
+    "improvement_roc_pct": -0.28473804100227434,
+    "training_time": 2.8853583335876465
+  },
+  "methods_tested": [
+    "Baseline (Supervised RF)",
+    "Label Propagation",
+    "Label Spreading",
+    "Self-Training",
+    "Co-Training"
+  ],
+  "key_findings": [
+    "Best Method: Self-Training with 2,500 unlabeled samples.",
+    "Composite Score improved by +3.71% (from 0.7194 to 0.7461).",
+    "F1-Score improved by +8.47%.",
+    "Demonstrates utility of unlabeled data for toxicity prediction."
+  ]
+}

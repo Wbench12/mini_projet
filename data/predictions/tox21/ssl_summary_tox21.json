@@ -1,0 +1,50 @@
+{
+  "experiment_date": "2025-12-12 17:13:33",
+  "experiment_type": "Tox21 Toxicity Prediction (Semi-Supervised)",
+  "training_setup": {
+    "n_labeled_total": 5660,
+    "n_labeled_train": 3962,
+    "n_test": 1698,
+    "unlabeled_sizes_tested": [
+      5000,
+      10000,
+      15000,
+      20000,
+      25000,
+      30000,
+      35000,
+      40000
+    ],
+    "stratified_sampling": true,
+    "metric_used_for_selection": "Composite Score (Avg of F1 & ROC-AUC)"
+  },
+  "best_model_tox": {
+    "method": "Co-Training",
+    "name": "CoTrain(n=15000)",
+    "n_unlabeled_used": 15000,
+    "composite_score": 0.7307367960908515,
+    "f1_score": 0.7016929363689434,
+    "accuracy": 0.699057714958775,
+    "precision": 0.6923963133640553,
+    "recall": 0.7112426035502959,
+    "roc_auc": 0.7597806558127597,
+    "baseline_composite": 0.7261162728511165,
+    "improvement_composite_pct": 0.6363337956319909,
+    "improvement_f1_pct": 2.7161721502096987,
+    "improvement_roc_pct": -1.21105362657662,
+    "training_time": NaN
+  },
+  "methods_tested": [
+    "Baseline (Supervised RF)",
+    "Label Propagation",
+    "Label Spreading",
+    "Self-Training",
+    "Co-Training"
+  ],
+  "key_findings": [
+    "Best Method: Co-Training with 15,000 unlabeled samples.",
+    "Composite Score improved by +0.64% (from 0.7261 to 0.7307).",
+    "F1-Score improved by +2.72%.",
+    "Demonstrates utility of unlabeled data for toxicity prediction."
+  ]
+}

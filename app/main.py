@@ -8,6 +8,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 
+# 1. Import your routers here
 from app.api.routes import health, qsar
 from app.config import settings
 from app.core.database import init_database
@@ -23,8 +24,11 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan events."""
-    # Startup
+    """
+    Application lifespan events.
+    Handles startup and shutdown logic (DB connections, Sentry, Model loading).
+    """
+    # --- STARTUP ---
     logger.info(f"Starting {settings.app_name} v{settings.app_version}")
 
     # Initialize Sentry if DSN is provided
@@ -40,22 +44,27 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Sentry initialized")
 
-    # Initialize database
-    await init_database()
-
+    # Initialize database connection
+    try:
+        await init_database()
+        logger.info("Database connection established")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        # We don't raise here to allow the app to start even if DB fails (optional)
+    
     logger.info("Application startup complete")
 
     yield
 
-    # Shutdown
+    # --- SHUTDOWN ---
     logger.info("Shutting down application")
 
 
-# Create FastAPI application
+# Create FastAPI application instance
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description="A production-ready FastAPI template",
+    description="QSAR Analysis API for Drug Discovery & Toxicity Prediction",
     lifespan=lifespan,
     debug=settings.debug,
 )
@@ -72,34 +81,43 @@ if settings.cors_origins:
 
 # Add security middleware
 app.add_middleware(
-    TrustedHostMiddleware, allowed_hosts=["*"] if settings.debug else ["localhost", "127.0.0.1"]
+    TrustedHostMiddleware, 
+    allowed_hosts=["*"] if settings.debug else ["localhost", "127.0.0.1"]
 )
 
 
 # Request logging middleware
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Log all requests."""
+    """Log all incoming requests and their status codes."""
     logger.info(f"{request.method} {request.url.path}")
     response = await call_next(request)
     logger.info(f"Response status: {response.status_code}")
     return response
 
 
-# Setup metrics
+# Setup Prometheus metrics
 setup_metrics(app)
 logger.info("Prometheus metrics enabled")
 
-# Include routers
-app.include_router(health.router, prefix="/health", tags=["health"])
-app.include_router(qsar.router, prefix="/qsar", tags=["qsar"])
+# ============================================================================
+# Register Routers
+# ============================================================================
+
+# Health check routes
+app.include_router(health.router, prefix="/health", tags=["System Health"])
+
+# 2. Register the QSAR Prediction routes
+app.include_router(qsar.router, prefix="/qsar", tags=["QSAR Analysis"])
 
 
 @app.get("/")
 async def root():
-    """Root endpoint."""
+    """Root endpoint providing API info."""
     return {
         "message": f"Welcome to {settings.app_name}",
+        "description": "QSAR Prediction Service for FDA Approval & Toxicity",
         "version": settings.app_version,
         "environment": settings.environment,
+        "docs_url": "/docs"
     }
