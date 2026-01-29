@@ -1,242 +1,717 @@
-"""TOX21 Pipeline - Toxicity Prediction using Self-Training"""
+"""TOX21 MLOps Pipeline - Complete End-to-End Workflow"""
 
 import os
 import sys
+import wandb
 import numpy as np
+import pandas as pd
 import joblib
+import time
+import random
+from datetime import datetime, timedelta
+from rdkit import Chem
+from rdkit.Chem import Descriptors, QED
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.semi_supervised import SelfTrainingClassifier
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
-
-# Fix imports - add project root to path if needed
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
-
-from pipeline.utils import (
-    FEATURE_COLS, process_enhanced_data, MAX_ITERATIONS, SAMPLES_PER_ITER, CONFIDENCE_THRESHOLD
+from sklearn.preprocessing import StandardScaler
+from sklearn.semi_supervised import LabelPropagation, LabelSpreading, SelfTrainingClassifier
+from sklearn.metrics import (
+    accuracy_score, f1_score, precision_score, 
+    recall_score, roc_auc_score
 )
-
-MODEL_OUTPUT_DIR = os.path.join(BASE_DIR, "app", "models")
-PROCESSED_DATA_DIR = os.path.join(BASE_DIR, "data", "processed")
-ENHANCED_DATA_DIR = os.path.join(BASE_DIR, "data", "raw", "enhanced_data")
-
-os.makedirs(MODEL_OUTPUT_DIR, exist_ok=True)
-os.makedirs(PROCESSED_DATA_DIR, exist_ok=True)
+from sklearn.utils import resample
 
 # Configuration
-DATASET_NAME = 'tox21'
-TARGET = 'toxic'
-METHOD = 'self_training'
-THRESHOLD = 0.80
-UNLABELED_SIZE = 15000
+PROJECT = "QSAR_MLOPS_TOX21"
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+MODEL_DIR = os.path.join(BASE_DIR, "app", "models")
 
-ENHANCED_DIR = os.path.join(ENHANCED_DATA_DIR, DATASET_NAME)
-PROCESSED_DIR = os.path.join(PROCESSED_DATA_DIR, DATASET_NAME)
+os.makedirs(MODEL_DIR, exist_ok=True)
+os.makedirs(os.path.join(DATA_DIR, "raw", "enhanced_data", "tox21"), exist_ok=True)
+os.makedirs(os.path.join(DATA_DIR, "processed", "tox21"), exist_ok=True)
 
 
-def train_self_training(X_train, y_train, X_unlabeled, X_val, y_val, threshold=0.80, target_size=15000):
-    """
-    Self-Training using sklearn's SelfTrainingClassifier with intelligent sample selection.
-    Always reaches target_size by selecting best quality samples first, then filling with remaining.
-    """
-    print(f"   🔄 Starting Self-Training (threshold={threshold}, target={target_size})")
+# ============================================================================
+# PHASE 1: DATA PREPARATION
+# ============================================================================
+
+def canonicalize_smiles(smiles):
+    """Standardize SMILES representation using RDKit"""
+    try:
+        mol = Chem.MolFromSmiles(smiles.strip())
+        if mol is not None:
+            return Chem.MolToSmiles(mol, canonical=True)
+    except:
+        pass
+    return None
+
+
+def compute_comprehensive_features(smiles):
+    """Compute comprehensive molecular descriptors"""
+    try:
+        mol = Chem.MolFromSmiles(smiles.strip())
+        if mol is not None:
+            features = {}
+            
+            # Basic molecular properties
+            features['MolWt'] = Descriptors.MolWt(mol)
+            features['LogP'] = Descriptors.MolLogP(mol)
+            features['NumHDonors'] = Descriptors.NumHDonors(mol)
+            features['NumHAcceptors'] = Descriptors.NumHAcceptors(mol)
+            features['NumRotatableBonds'] = Descriptors.NumRotatableBonds(mol)
+            features['NumAromaticRings'] = Descriptors.NumAromaticRings(mol)
+            
+            # Lipinski's Rule of Five
+            features['NumHeteroatoms'] = Descriptors.NumHeteroatoms(mol)
+            features['TPSA'] = Descriptors.TPSA(mol)
+            
+            # Complexity and shape
+            features['NumRings'] = Descriptors.RingCount(mol)
+            features['NumAliphaticRings'] = Descriptors.NumAliphaticRings(mol)
+            features['NumSaturatedRings'] = Descriptors.NumSaturatedRings(mol)
+            features['FractionCsp3'] = Descriptors.FractionCSP3(mol)
+            
+            # Electronic properties
+            features['NumValenceElectrons'] = Descriptors.NumValenceElectrons(mol)
+            
+            try:
+                features['MaxPartialCharge'] = Descriptors.MaxPartialCharge(mol)
+                features['MinPartialCharge'] = Descriptors.MinPartialCharge(mol)
+            except:
+                features['MaxPartialCharge'] = 0
+                features['MinPartialCharge'] = 0
+            
+            # Molecular surface area
+            features['LabuteASA'] = Descriptors.LabuteASA(mol)
+            features['PEOE_VSA1'] = Descriptors.PEOE_VSA1(mol)
+            features['PEOE_VSA2'] = Descriptors.PEOE_VSA2(mol)
+            
+            # Drug-likeness scores
+            features['QED'] = QED.qed(mol)
+            
+            # Topological descriptors
+            features['BertzCT'] = Descriptors.BertzCT(mol)
+            features['Chi0v'] = Descriptors.Chi0v(mol)
+            features['Chi1v'] = Descriptors.Chi1v(mol)
+            features['Kappa1'] = Descriptors.Kappa1(mol)
+            features['Kappa2'] = Descriptors.Kappa2(mol)
+            
+            # Additional descriptors
+            features['MolMR'] = Descriptors.MolMR(mol)
+            features['BalabanJ'] = Descriptors.BalabanJ(mol)
+            features['HallKierAlpha'] = Descriptors.HallKierAlpha(mol)
+            features['NumSaturatedCarbocycles'] = Descriptors.NumSaturatedCarbocycles(mol)
+            features['NumAromaticCarbocycles'] = Descriptors.NumAromaticCarbocycles(mol)
+            features['NumSaturatedHeterocycles'] = Descriptors.NumSaturatedHeterocycles(mol)
+            features['NumAromaticHeterocycles'] = Descriptors.NumAromaticHeterocycles(mol)
+            
+            # Pharmacophore features
+            features['fr_NH2'] = Descriptors.fr_NH2(mol)
+            features['fr_COO'] = Descriptors.fr_COO(mol)
+            features['fr_benzene'] = Descriptors.fr_benzene(mol)
+            features['fr_furan'] = Descriptors.fr_furan(mol)
+            features['fr_halogen'] = Descriptors.fr_halogen(mol)
+            
+            return pd.Series(features)
+    except Exception as e:
+        print(f"Error computing features: {e}")
+    return pd.Series()
+
+
+def clip_outliers(df, std_threshold=3):
+    """Clip outliers using standard deviation method"""
+    df_clipped = df.copy()
+    outlier_count = 0
     
-    # Initial baseline model
-    base_model = RandomForestClassifier(
-        n_estimators=100,
-        random_state=42,
-        class_weight='balanced',
-        n_jobs=-1
+    for col in df.columns:
+        mean = df[col].mean()
+        std = df[col].std()
+        lower_bound = mean - std_threshold * std
+        upper_bound = mean + std_threshold * std
+        
+        outliers = ((df[col] < lower_bound) | (df[col] > upper_bound)).sum()
+        if outliers > 0:
+            outlier_count += outliers
+            df_clipped[col] = df[col].clip(lower_bound, upper_bound)
+    
+    return df_clipped, outlier_count
+
+
+def prepare_data():
+    """Phase 1: Data Ingestion & Preparation"""
+    print("=" * 80)
+    print("PHASE 1: DATA PREPARATION")
+    print("=" * 80)
+    
+    wandb.init(project=PROJECT, job_type="prepare-data")
+    
+    # Load raw data
+    print("\nLoading raw data...")
+    raw_df_unlabeled = pd.read_csv(os.path.join(DATA_DIR, 'raw/original_data/zinc_unlabeled.csv'))
+    raw_df_labeled = pd.read_csv(os.path.join(DATA_DIR, 'raw/original_data/tox21.csv'))
+    
+    # Canonicalize SMILES
+    print("Canonicalizing SMILES...")
+    raw_df_labeled['canonical_smiles'] = raw_df_labeled['smiles'].apply(canonicalize_smiles)
+    raw_df_labeled = raw_df_labeled.dropna(subset=['canonical_smiles'])
+    
+    # Create binary toxicity target
+    print("Creating toxicity target...")
+    tox_columns = ['NR-AR', 'NR-AR-LBD', 'NR-AhR', 'NR-Aromatase', 'NR-ER', 'NR-ER-LBD',
+                   'NR-PPAR-gamma', 'SR-ARE', 'SR-ATAD5', 'SR-HSE', 'SR-MMP', 'SR-p53']
+    raw_df_labeled['toxic'] = raw_df_labeled[tox_columns].max(axis=1)
+    raw_df_labeled = raw_df_labeled.dropna(subset=['toxic'])
+    raw_df_labeled['toxic'] = raw_df_labeled['toxic'].astype(int)
+    raw_df_labeled = raw_df_labeled.drop(columns=tox_columns)
+    
+    # Balance classes
+    print("Balancing classes...")
+    toxic_df = raw_df_labeled[raw_df_labeled['toxic'] == 1]
+    non_toxic_df = raw_df_labeled[raw_df_labeled['toxic'] == 0]
+    non_toxic_downsampled = resample(non_toxic_df, replace=False, 
+                                      n_samples=len(toxic_df), random_state=42)
+    raw_df_labeled_balanced = pd.concat([toxic_df, non_toxic_downsampled])
+    raw_df_labeled_balanced = raw_df_labeled_balanced.sample(frac=1, random_state=42).reset_index(drop=True)
+    
+    # Compute features for labeled data
+    print("Computing features for labeled data...")
+    labeled_features = raw_df_labeled_balanced['canonical_smiles'].apply(compute_comprehensive_features)
+    all_labeled_with_features = pd.concat([raw_df_labeled_balanced, labeled_features], axis=1)
+    all_labeled_with_features = all_labeled_with_features.dropna()
+    all_labeled_with_features.to_csv(
+        os.path.join(DATA_DIR, 'raw/enhanced_data/tox21/labeled_features.csv'), index=False
     )
-    base_model.fit(X_train, y_train)
     
-    # Evaluate baseline
-    y_pred_base = base_model.predict(X_val)
-    y_proba_base = base_model.predict_proba(X_val)[:, 1]
-    baseline_f1 = f1_score(y_val, y_pred_base)
-    baseline_auc = roc_auc_score(y_val, y_proba_base)
-    
-    print(f"      Baseline: F1={baseline_f1:.4f}, AUC={baseline_auc:.4f}")
-    
-    # Intelligent selection: Filter unlabeled samples
-    print(f"      Selecting {target_size} unlabeled samples from {len(X_unlabeled)} candidates...")
-    
-    unlabeled_proba = base_model.predict_proba(X_unlabeled)
-    unlabeled_conf = np.max(unlabeled_proba, axis=1)
-    unlabeled_pred = np.argmax(unlabeled_proba, axis=1)
-    
-    # Filter by confidence threshold
-    high_conf_mask = unlabeled_conf > threshold
-    high_conf_indices = np.where(high_conf_mask)[0]
-    
-    # Sort all by confidence (descending)
-    all_sorted_indices = np.argsort(unlabeled_conf)[::-1]
-    
-    # Phase 1: Select high-confidence samples (simplified - no individual testing)
-    # Just use top samples by confidence to speed up the process
-    selected_indices = []
-    if len(high_conf_indices) > 0:
-        sorted_high_conf = high_conf_indices[np.argsort(unlabeled_conf[high_conf_indices])[::-1]]
-        
-        # Take the top target_size samples from high confidence pool
-        samples_to_take = min(target_size, len(sorted_high_conf))
-        selected_indices = sorted_high_conf[:samples_to_take].tolist()
-        
-        print(f"      Phase 1: Selected {len(selected_indices)} high-confidence samples (conf > {threshold})")
-    
-    # Phase 2: If not enough high-confidence samples, fill with next best
-    if len(selected_indices) < target_size:
-        remaining_needed = target_size - len(selected_indices)
-        print(f"      Phase 2: Need {remaining_needed} more samples, selecting from all pool by confidence...")
-        
-        # Convert current selected to set for fast lookup
-        selected_set = set(selected_indices)
-        
-        # Add remaining samples from all sorted by confidence
-        for idx in all_sorted_indices:
-            if len(selected_indices) >= target_size:
-                break
-            if idx not in selected_set:
-                selected_indices.append(idx)
-        
-        print(f"      ✓ Added {len(selected_indices) - len(selected_set)} additional samples")
-    
-    # Convert to array and ensure we have exactly target_size (or all available if less)
-    selected_indices = np.array(selected_indices)[:min(target_size, len(X_unlabeled))]
-    
-    if len(selected_indices) < target_size:
-        print(f"      ⚠️ Only {len(selected_indices)} samples available (target was {target_size})")
-    else:
-        print(f"      ✓ Selected exactly {len(selected_indices)} samples")
-    
-    # Prepare data for SelfTrainingClassifier
-    X_selected = X_unlabeled[selected_indices]
-    X_combined = np.vstack([X_train, X_selected])
-    y_combined = np.concatenate([y_train, np.full(len(X_selected), -1)])
-    
-    print(f"      Combined: {len(X_train)} labeled + {len(X_selected)} unlabeled = {len(X_combined)} total")
-    
-    # Use sklearn's SelfTrainingClassifier
-    st_classifier = SelfTrainingClassifier(
-        base_estimator=RandomForestClassifier(
-            n_estimators=100,
-            random_state=42,
-            class_weight='balanced',
-            n_jobs=-1
-        ),
-        threshold=threshold,
-        max_iter=10,
-        verbose=False
+    # Compute features for unlabeled data
+    print("Computing features for unlabeled data...")
+    raw_df_unlabeled['canonical_smiles'] = raw_df_unlabeled['smiles'].apply(canonicalize_smiles)
+    raw_df_unlabeled = raw_df_unlabeled.dropna(subset=['canonical_smiles'])
+    unlabeled_features = raw_df_unlabeled['canonical_smiles'].apply(compute_comprehensive_features)
+    unlabeled_with_features = pd.concat(
+        [raw_df_unlabeled[['smiles', 'canonical_smiles']], unlabeled_features], axis=1
+    )
+    unlabeled_with_features['toxic'] = np.nan
+    unlabeled_with_features = unlabeled_with_features.dropna(subset=unlabeled_features.columns.tolist())
+    unlabeled_with_features.to_csv(
+        os.path.join(DATA_DIR, 'raw/enhanced_data/tox21/unlabeled_features.csv'), index=False
     )
     
-    print(f"      Training SelfTrainingClassifier...")
-    st_classifier.fit(X_combined, y_combined)
+    # Prepare feature matrices
+    print("Preparing feature matrices...")
+    exclude_cols = ['smiles', 'canonical_smiles', 'FDA_APPROVED', 'toxic', 'mol_id']
+    all_features = [col for col in all_labeled_with_features.columns if col not in exclude_cols]
     
-    # Check how many were pseudo-labeled
-    n_pseudo_labeled = (st_classifier.transduction_ != -1).sum() - len(y_train)
-    print(f"      📝 Pseudo-labeled {n_pseudo_labeled}/{len(X_selected)} samples ({n_pseudo_labeled/len(X_selected)*100:.1f}%)")
+    X_labeled = all_labeled_with_features[all_features]
+    y_tox = all_labeled_with_features['toxic']
+    X_unlabeled = unlabeled_with_features[all_features]
     
-    # Evaluate on validation set
-    y_pred_val = st_classifier.predict(X_val)
-    y_proba_val = st_classifier.predict_proba(X_val)[:, 1]
-    val_f1 = f1_score(y_val, y_pred_val)
-    val_auc = roc_auc_score(y_val, y_proba_val)
+    # Clip outliers
+    print("Clipping outliers...")
+    X_labeled_clipped, _ = clip_outliers(X_labeled, std_threshold=3)
+    X_unlabeled_clipped, _ = clip_outliers(X_unlabeled, std_threshold=3)
     
-    print(f"      Validation: F1={val_f1:.4f}, AUC={val_auc:.4f}")
+    # Save processed data
+    print("Saving processed data...")
+    df_labeled_processed = X_labeled_clipped.copy()
+    df_labeled_processed['toxic'] = y_tox.values
+    df_unlabeled_processed = X_unlabeled_clipped.copy()
+    df_unlabeled_processed['toxic'] = np.nan
     
-    return st_classifier
+    df_labeled_processed.to_csv(
+        os.path.join(DATA_DIR, 'processed/tox21/labeled_processed.csv'), index=False
+    )
+    df_unlabeled_processed.to_csv(
+        os.path.join(DATA_DIR, 'processed/tox21/unlabeled_processed.csv'), index=False
+    )
+    
+    # Create W&B artifacts
+    print("Creating W&B artifacts...")
+    artifact_labeled = wandb.Artifact(
+        name="tox21-labeled-dataset",
+        type="dataset",
+        description="Cleaned labeled tox21 data"
+    )
+    artifact_labeled.add_file(os.path.join(DATA_DIR, 'processed/tox21/labeled_processed.csv'))
+    wandb.log_artifact(artifact_labeled)
+    
+    artifact_unlabeled = wandb.Artifact(
+        name="zinc-unlabeled-dataset",
+        type="dataset",
+        description="Cleaned unlabeled zinc data"
+    )
+    artifact_unlabeled.add_file(os.path.join(DATA_DIR, 'processed/tox21/unlabeled_processed.csv'))
+    wandb.log_artifact(artifact_unlabeled)
+    
+    wandb.finish()
+    print("\nPhase 1 Complete: Data Prepared")
 
 
-def train_and_evaluate(X_labeled, y_labeled, X_unlabeled, scaler):
-    """Train model and evaluate on test set."""
-    print(f"\n🚀 Training TOX21 Model...")
+# ============================================================================
+# PHASE 2 & 3: BASELINE MODEL & HYPERPARAMETER OPTIMIZATION
+# ============================================================================
+
+def train_baseline():
+    """Train baseline model with sweep configuration"""
+    run = wandb.init()
+    config = wandb.config
     
-    # Split for validation (80% train / 20% test)
+    # Load data
+    artifact_labeled = run.use_artifact('tox21-labeled-dataset:latest')
+    data_path = artifact_labeled.download()
+    df_labeled = pd.read_csv(f"{data_path}/labeled_processed.csv")
+    
+    X = df_labeled.drop('toxic', axis=1)
+    y = df_labeled['toxic']
+    
+    # Handle NaN and Inf
+    X = X.replace([np.inf, -np.inf], np.nan)
+    X = X.fillna(X.median())
+    
+    # Split and scale
     X_train, X_test, y_train, y_test = train_test_split(
-        X_labeled, y_labeled, test_size=0.2, random_state=42, stratify=y_labeled
+        X, y, test_size=0.3, random_state=42, stratify=y
     )
     
-    # Further split train for validation during training
-    X_train_fit, X_val, y_train_fit, y_val = train_test_split(
-        X_train, y_train, test_size=0.2, random_state=42, stratify=y_train
-    )
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
     
     # Train model
-    if X_unlabeled is None or len(X_unlabeled) == 0:
-        print("   ℹ️ No unlabeled data. Running Supervised Learning.")
-        model = RandomForestClassifier(
-            n_estimators=100,
-            random_state=42,
-            class_weight='balanced',
-            n_jobs=-1
-        )
-        model.fit(X_train_fit, y_train_fit)
-    else:
-        # Use all available unlabeled data up to target size
-        model = train_self_training(
-            X_train_fit, y_train_fit, X_unlabeled, X_val, y_val, 
-            THRESHOLD, UNLABELED_SIZE
-        )
-    
-    # Evaluate on test set
-    print("   📈 Evaluating on Test Set...")
-    y_pred = model.predict(X_test)
-    y_proba = model.predict_proba(X_test)[:, 1]
-    
-    metrics = {
-        "accuracy": float(accuracy_score(y_test, y_pred)),
-        "f1_score": float(f1_score(y_test, y_pred)),
-        "precision": float(precision_score(y_test, y_pred, zero_division=0)),
-        "recall": float(recall_score(y_test, y_pred, zero_division=0)),
-        "roc_auc": float(roc_auc_score(y_test, y_proba))
-    }
-    
-    print(f"      F1: {metrics['f1_score']:.4f} | AUC: {metrics['roc_auc']:.4f}")
-    return model, metrics
-
-
-def run_pipeline():
-    """Main pipeline execution for TOX21."""
-    print("="*60)
-    print("🔬 TOX21 PIPELINE (Toxicity Prediction)")
-    print("="*60)
-    
-    # Step 1: Process enhanced data
-    X_lab, y_lab, X_unlab, scaler = process_enhanced_data(
-        ENHANCED_DIR, TARGET, DATASET_NAME, PROCESSED_DIR
+    model = RandomForestClassifier(
+        n_estimators=config.n_estimators,
+        max_depth=config.max_depth,
+        min_samples_split=config.min_samples_split,
+        min_samples_leaf=config.min_samples_leaf,
+        max_features=config.max_features,
+        random_state=42,
+        n_jobs=-1,
+        class_weight='balanced'
     )
     
-    if X_lab is None:
-        print(f"   ❌ Failed to process data. Exiting.")
-        return None
+    model.fit(X_train_scaled, y_train)
     
-    # Step 2: Train and evaluate
-    model, metrics = train_and_evaluate(X_lab, y_lab, X_unlab, scaler)
+    # Evaluate
+    y_pred = model.predict(X_test_scaled)
+    y_pred_proba = model.predict_proba(X_test_scaled)[:, 1]
     
-    # Step 3: Save model
-    model_name = f"{DATASET_NAME}_model.pkl"
-    artifact = {
-        "model": model,
-        "scaler": scaler,
-        "metrics": metrics,
-        "type": METHOD.replace('_', '-').title(),
-        "dataset": DATASET_NAME,
-        "target": TARGET
+    metrics = {
+        'val_accuracy': accuracy_score(y_test, y_pred),
+        'val_precision': precision_score(y_test, y_pred, zero_division=0),
+        'val_recall': recall_score(y_test, y_pred, zero_division=0),
+        'val_f1': f1_score(y_test, y_pred, zero_division=0),
+        'val_roc_auc': roc_auc_score(y_test, y_pred_proba)
     }
-    path = os.path.join(MODEL_OUTPUT_DIR, model_name)
-    joblib.dump(artifact, path)
-    print(f"   💾 Saved model: {path}")
     
-    # Also save scaler separately
-    scaler_model_path = os.path.join(MODEL_OUTPUT_DIR, f"{DATASET_NAME}_scaler.pkl")
-    joblib.dump(scaler, scaler_model_path)
-    print(f"   💾 Saved scaler: {scaler_model_path}")
+    wandb.log(metrics)
+    print(f"F1: {metrics['val_f1']:.4f}, ROC-AUC: {metrics['val_roc_auc']:.4f}")
+
+
+def run_baseline_sweep(count=20):
+    """Phase 2 & 3: Baseline Model & Hyperparameter Optimization"""
+    print("=" * 80)
+    print("PHASE 2 & 3: BASELINE MODEL & HYPERPARAMETER OPTIMIZATION")
+    print("=" * 80)
     
-    print(f"\n✅ TOX21 Pipeline Complete")
-    return model, metrics, scaler
+    baseline_sweep_config = {
+        'method': 'bayes',
+        'metric': {'name': 'val_f1', 'goal': 'maximize'},
+        'parameters': {
+            'n_estimators': {'values': [50, 100, 150, 200]},
+            'max_depth': {'values': [10, 15, 20, 25, 30]},
+            'min_samples_split': {'values': [2, 5, 10]},
+            'min_samples_leaf': {'values': [1, 2, 4]},
+            'max_features': {'values': ['sqrt', 'log2']}
+        }
+    }
+    
+    sweep_id = wandb.sweep(baseline_sweep_config, project=PROJECT)
+    wandb.agent(sweep_id, train_baseline, count=count)
+    
+    print("\nPhase 2 & 3 Complete: Baseline Model Optimized")
+    return sweep_id
+
+
+def register_best_baseline(sweep_id):
+    """Register the best baseline model"""
+    print("\nRegistering best baseline model...")
+    
+    api = wandb.Api()
+    entity = api.default_entity
+    
+    baseline_sweep = api.sweep(f"{entity}/{PROJECT}/{sweep_id}")
+    best_baseline_run = baseline_sweep.best_run()
+    
+    print(f"\nBEST BASELINE MODEL")
+    print(f"F1-Score: {best_baseline_run.summary.get('val_f1'):.4f}")
+    print(f"ROC-AUC: {best_baseline_run.summary.get('val_roc_auc'):.4f}")
+    
+    best_config = {
+        'n_estimators': best_baseline_run.config['n_estimators'],
+        'max_depth': best_baseline_run.config['max_depth'],
+        'min_samples_split': best_baseline_run.config['min_samples_split'],
+        'min_samples_leaf': best_baseline_run.config['min_samples_leaf'],
+        'max_features': best_baseline_run.config['max_features']
+    }
+    
+    # Retrain and save
+    run = wandb.init(project=PROJECT, job_type="register-baseline-model")
+    
+    artifact = run.use_artifact('tox21-labeled-dataset:latest')
+    data_path = artifact.download()
+    df_labeled = pd.read_csv(f"{data_path}/labeled_processed.csv")
+    
+    X = df_labeled.drop('toxic', axis=1)
+    y = df_labeled['toxic']
+    X = X.replace([np.inf, -np.inf], np.nan).fillna(X.median())
+    
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42, stratify=y
+    )
+    
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    
+    model = RandomForestClassifier(**best_config, random_state=42, n_jobs=-1, class_weight='balanced')
+    model.fit(X_train_scaled, y_train)
+    
+    os.makedirs('models', exist_ok=True)
+    joblib.dump(model, 'models/best_baseline_rf_model.pkl')
+    joblib.dump(scaler, 'models/scaler.pkl')
+    
+    baseline_artifact = wandb.Artifact(
+        name='tox21-baseline-rf-model',
+        type='model',
+        description='Best baseline Random Forest model',
+        metadata={'method': 'baseline_supervised', **best_config}
+    )
+    baseline_artifact.add_file('models/best_baseline_rf_model.pkl')
+    baseline_artifact.add_file('models/scaler.pkl')
+    run.log_artifact(baseline_artifact)
+    run.finish()
+    
+    print("Best baseline model registered")
+    return best_config
+
+
+# ============================================================================
+# PHASE 4: SEMI-SUPERVISED LEARNING
+# ============================================================================
+
+def train_ssl(best_baseline_config, best_baseline_f1):
+    """Train SSL model with sweep configuration"""
+    run = wandb.init()
+    config = wandb.config
+    
+    # Load data
+    artifact_labeled = run.use_artifact('tox21-labeled-dataset:latest')
+    data_path_labeled = artifact_labeled.download()
+    df_labeled = pd.read_csv(f"{data_path_labeled}/labeled_processed.csv")
+    
+    artifact_unlabeled = run.use_artifact('zinc-unlabeled-dataset:latest')
+    data_path_unlabeled = artifact_unlabeled.download()
+    df_unlabeled = pd.read_csv(f"{data_path_unlabeled}/unlabeled_processed.csv")
+    
+    X = df_labeled.drop('toxic', axis=1)
+    y = df_labeled['toxic']
+    X = X.replace([np.inf, -np.inf], np.nan).fillna(X.median())
+    
+    X_unlabeled_full = df_unlabeled.drop('toxic', axis=1)
+    X_unlabeled_full = X_unlabeled_full.replace([np.inf, -np.inf], np.nan).fillna(X_unlabeled_full.median())
+    
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42, stratify=y
+    )
+    
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    X_unlabeled_scaled = scaler.transform(X_unlabeled_full)
+    
+    n_unlabeled = min(config.n_unlabeled, len(X_unlabeled_scaled))
+    X_unlabeled = X_unlabeled_scaled[:n_unlabeled]
+    
+    # Train based on SSL method
+    if config.ssl_method == 'label_propagation':
+        X_combined = np.vstack([X_train_scaled, X_unlabeled])
+        y_combined = np.concatenate([y_train.values, np.full(n_unlabeled, -1)])
+        
+        model = LabelPropagation(
+            kernel='rbf',
+            gamma=config.lp_gamma,
+            max_iter=config.lp_max_iter,
+            n_jobs=-1
+        )
+        model.fit(X_combined, y_combined)
+        y_pred = model.predict(X_test_scaled)
+        y_pred_proba = model.predict_proba(X_test_scaled)[:, 1]
+    
+    elif config.ssl_method == 'self_training':
+        X_combined = np.vstack([X_train_scaled, X_unlabeled])
+        y_combined = np.concatenate([y_train.values, np.full(n_unlabeled, -1)])
+        
+        base_clf = RandomForestClassifier(**best_baseline_config, random_state=42, 
+                                          n_jobs=-1, class_weight='balanced')
+        model = SelfTrainingClassifier(
+            base_estimator=base_clf,
+            threshold=config.st_threshold,
+            max_iter=config.st_max_iter,
+            verbose=False
+        )
+        model.fit(X_combined, y_combined)
+        y_pred = model.predict(X_test_scaled)
+        y_pred_proba = model.predict_proba(X_test_scaled)[:, 1]
+    
+    # Evaluate
+    metrics = {
+        'val_accuracy': accuracy_score(y_test, y_pred),
+        'val_precision': precision_score(y_test, y_pred, zero_division=0),
+        'val_recall': recall_score(y_test, y_pred, zero_division=0),
+        'val_f1': f1_score(y_test, y_pred, zero_division=0),
+        'val_roc_auc': roc_auc_score(y_test, y_pred_proba),
+        'n_unlabeled_used': n_unlabeled,
+        'n_labeled': len(X_train)
+    }
+    
+    improvement = ((metrics['val_f1'] - best_baseline_f1) / best_baseline_f1) * 100
+    metrics['improvement_over_baseline_pct'] = improvement
+    
+    wandb.log(metrics)
+    print(f"F1: {metrics['val_f1']:.4f} (+{improvement:+.2f}%), ROC-AUC: {metrics['val_roc_auc']:.4f}")
+
+
+def run_ssl_sweep(best_baseline_config, best_baseline_f1, count=50):
+    """Phase 4: Semi-Supervised Learning"""
+    print("=" * 80)
+    print("PHASE 4: SEMI-SUPERVISED LEARNING")
+    print("=" * 80)
+    
+    ssl_sweep_config = {
+        'method': 'bayes',
+        'metric': {'name': 'val_f1', 'goal': 'maximize'},
+        'parameters': {
+            'ssl_method': {'values': ['label_propagation', 'self_training']},
+            'n_unlabeled': {'values': [5000, 10000, 15000, 20000]},
+            'lp_gamma': {'distribution': 'log_uniform_values', 'min': 0.001, 'max': 0.5},
+            'lp_max_iter': {'values': [500, 1000, 1500]},
+            'st_threshold': {'distribution': 'uniform', 'min': 0.7, 'max': 0.95},
+            'st_max_iter': {'values': [5, 10, 15]}
+        }
+    }
+    
+    sweep_id = wandb.sweep(ssl_sweep_config, project=PROJECT)
+    
+    def train_ssl_wrapper():
+        train_ssl(best_baseline_config, best_baseline_f1)
+    
+    wandb.agent(sweep_id, train_ssl_wrapper, count=count)
+    
+    print("\nPhase 4 Complete: SSL Models Trained")
+    return sweep_id
+
+
+# ============================================================================
+# PHASE 5: PRODUCTION MONITORING
+# ============================================================================
+
+def monitor_production(num_requests=100):
+    """Phase 5: Production Monitoring"""
+    print("=" * 80)
+    print("PHASE 5: PRODUCTION MONITORING")
+    print("=" * 80)
+    
+    wandb.init(
+        project=PROJECT,
+        job_type="monitor-production",
+        name=f"production-monitoring-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+        tags=["production", "monitoring", "tox21"]
+    )
+    
+    ALERT_THRESHOLD_MS = 40
+    CONFIDENCE_THRESHOLD = 0.5
+    
+    print(f"Simulating {num_requests} production requests...")
+    
+    for i in range(num_requests):
+        prediction_time_ms = random.uniform(10, 50)
+        prediction_confidence = random.uniform(0.7, 0.99)
+        
+        predictions = {
+            "NR-AR": random.uniform(0, 1),
+            "NR-ER": random.uniform(0, 1),
+            "SR-ARE": random.uniform(0, 1),
+            "SR-p53": random.uniform(0, 1),
+        }
+        
+        avg_prediction = np.mean(list(predictions.values()))
+        data_drift_score = random.uniform(0, 0.3)
+        
+        wandb.log({
+            "prediction_time_ms": prediction_time_ms,
+            "prediction_confidence": prediction_confidence,
+            "avg_prediction_score": avg_prediction,
+            "data_drift_score": data_drift_score,
+            **{f"pred_{endpoint}": score for endpoint, score in predictions.items()},
+            "request_id": i,
+            "timestamp": time.time()
+        })
+        
+        if prediction_time_ms > ALERT_THRESHOLD_MS:
+            print(f"Request {i}: High latency detected ({prediction_time_ms:.2f}ms)")
+        
+        time.sleep(0.1)
+    
+    wandb.finish()
+    print("\nPhase 5 Complete: Production Monitoring")
+
+
+# ============================================================================
+# PHASE 6: AUTOMATED RETRAINING
+# ============================================================================
+
+def check_and_retrain():
+    """Phase 6: Automated Retraining"""
+    print("=" * 80)
+    print("PHASE 6: AUTOMATED RETRAINING PIPELINE")
+    print("=" * 80)
+    
+    CONFIDENCE_THRESHOLD = 0.70
+    DRIFT_THRESHOLD = 0.25
+    AUTO_RETRAIN_ENABLED = True
+    
+    api = wandb.Api()
+    entity = api.default_entity
+    
+    print(f"\nFetching monitoring runs...")
+    all_runs = api.runs(f"{entity}/{PROJECT}")
+    monitor_runs = [run for run in all_runs if run.job_type == "monitor-production"]
+    
+    if not monitor_runs:
+        print("No monitoring runs found. Run production monitoring first.")
+        return
+    
+    print(f"✓ Found {len(monitor_runs)} monitoring runs")
+    
+    latest_monitor_run = max(monitor_runs, key=lambda r: r.created_at)
+    print(f"Latest run: {latest_monitor_run.name}")
+    
+    history = latest_monitor_run.history()
+    
+    if history.empty:
+        print("No metrics found in monitoring run history")
+        return
+    
+    avg_confidence = history['prediction_confidence'].mean()
+    avg_drift = history['data_drift_score'].mean()
+    
+    print(f"\nPerformance Metrics:")
+    print(f"  Average Confidence: {avg_confidence:.4f}")
+    print(f"  Average Drift Score: {avg_drift:.4f}")
+    
+    needs_retraining = False
+    retraining_reasons = []
+    
+    if avg_confidence < CONFIDENCE_THRESHOLD:
+        needs_retraining = True
+        retraining_reasons.append(f"Low confidence: {avg_confidence:.4f} < {CONFIDENCE_THRESHOLD}")
+    
+    if avg_drift > DRIFT_THRESHOLD:
+        needs_retraining = True
+        retraining_reasons.append(f"High drift: {avg_drift:.4f} > {DRIFT_THRESHOLD}")
+    
+    if needs_retraining and AUTO_RETRAIN_ENABLED:
+        print(f"\nPERFORMANCE DEGRADATION DETECTED!")
+        print(f"Reasons:")
+        for reason in retraining_reasons:
+            print(f"  • {reason}")
+        
+        print(f"\nTRIGGERING AUTOMATED RETRAINING...")
+        
+        alert_run = wandb.init(
+            project=PROJECT,
+            job_type="automated-retraining-trigger",
+            name=f"retrain-trigger-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+            tags=["retraining", "automated", "triggered"]
+        )
+        
+        wandb.log({
+            'retraining_triggered': 1,
+            'avg_confidence': avg_confidence,
+            'avg_drift': avg_drift,
+            'timestamp': datetime.now().timestamp()
+        })
+        
+        wandb.alert(
+            title="Automated Retraining Triggered",
+            text=f"Model performance degraded. Reasons: {', '.join(retraining_reasons)}",
+            level=wandb.AlertLevel.WARN
+        )
+        
+        print(f"✓ Retraining trigger logged to W&B")
+        alert_run.finish()
+    else:
+        print(f"\nMODEL PERFORMANCE IS HEALTHY")
+    
+    print("\nPhase 6 Complete: Automated Retraining Check")
+
+
+# ============================================================================
+# MAIN PIPELINE
+# ============================================================================
+
+def run_full_pipeline():
+    """Run the complete MLOps pipeline"""
+    print("\n" + "=" * 80)
+    print("TOX21 MLOPS PIPELINE - COMPLETE WORKFLOW")
+    print("=" * 80 + "\n")
+    
+    # Phase 1: Data Preparation
+    prepare_data()
+    
+    # Phase 2 & 3: Baseline Model
+    baseline_sweep_id = run_baseline_sweep(count=20)
+    best_baseline_config = register_best_baseline(baseline_sweep_id)
+    
+    # Get best baseline F1 score
+    api = wandb.Api()
+    entity = api.default_entity
+    baseline_sweep = api.sweep(f"{entity}/{PROJECT}/{baseline_sweep_id}")
+    best_baseline_f1 = baseline_sweep.best_run().summary.get('val_f1')
+    
+    # Phase 4: Semi-Supervised Learning
+    ssl_sweep_id = run_ssl_sweep(best_baseline_config, best_baseline_f1, count=50)
+    
+    # Phase 5: Production Monitoring
+    monitor_production(num_requests=100)
+    
+    # Phase 6: Automated Retraining
+    check_and_retrain()
+    
+    print("\n" + "=" * 80)
+    print("COMPLETE MLOPS PIPELINE FINISHED!")
+    print("=" * 80)
 
 
 if __name__ == "__main__":
-    run_pipeline()
+    # You can run individual phases or the full pipeline
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='TOX21 MLOps Pipeline')
+    parser.add_argument('--phase', type=str, choices=['all', '1', '2', '3', '4', '5', '6'],
+                        default='all', help='Which phase to run')
+    
+    args = parser.parse_args()
+    
+    if args.phase == 'all':
+        run_full_pipeline()
+    elif args.phase == '1':
+        prepare_data()
+    elif args.phase in ['2', '3']:
+        baseline_sweep_id = run_baseline_sweep(count=20)
+        register_best_baseline(baseline_sweep_id)
+    elif args.phase == '5':
+        monitor_production(num_requests=100)
+    elif args.phase == '6':
+        check_and_retrain()
+    else:
+        print(f"Phase {args.phase} handler not fully implemented in standalone mode")
